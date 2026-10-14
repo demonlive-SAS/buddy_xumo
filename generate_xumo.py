@@ -64,10 +64,8 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - [
 def fetch_data(url, params=None, is_json=True, retries=2, delay=2, headers=WEB_HEADERS): # Default to Web Headers
     """Fetches data from a URL, handles JSON parsing and errors, includes retries."""
     logging.debug(f"URL: {url}, Params: {params}")
-    # logging.debug(f"Headers: {json.dumps(headers)}") # Can be verbose
     for attempt in range(retries + 1):
         try:
-            # Pass specific headers for the call
             response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT, allow_redirects=True)
             logging.debug(f"Request URL: {response.url} -> Status: {response.status_code}")
             response.raise_for_status()
@@ -81,18 +79,15 @@ def fetch_data(url, params=None, is_json=True, retries=2, delay=2, headers=WEB_H
             else:
                  try:
                      decoded_text = response.content.decode('utf-8', errors='ignore')
-                     # Limit logging of non-json text unless debugging specific text issue
-                     # if logging.getLogger().level == logging.DEBUG: logging.debug(f"Raw Text Response:\n{decoded_text[:1500]}...")
                      return decoded_text
                  except Exception as decode_ex: logging.error(f"Error decoding text response: {decode_ex}"); return None
         except requests.exceptions.HTTPError as e:
             logging.warning(f"Attempt {attempt+1}/{retries+1} HTTP Error: {e}")
             if response is not None: logging.warning(f"Error Response Content: {response.text[:500]}...")
-            # Don't retry 404
             if attempt < retries and response is not None and response.status_code not in [401, 403, 404, 429]:
                 time.sleep(delay * (attempt + 1))
             elif attempt == retries: logging.error(f"Final attempt failed with HTTP Error: {e}"); return None
-            else: break # Non-retriable HTTP error or final attempt failed (like 404)
+            else: break
         except requests.exceptions.RequestException as e:
             logging.warning(f"Attempt {attempt+1}/{retries+1} Network Error: {e}")
             if attempt < retries: time.sleep(delay * (attempt + 1))
@@ -125,7 +120,6 @@ def format_xmltv_time(dt_obj):
     else: dt_obj_utc = dt_obj.astimezone(timezone.utc)
     main_part = dt_obj_utc.strftime('%Y%m%d%H%M%S'); offset_part = dt_obj_utc.strftime('%z')
     offset_part_clean = offset_part.replace(':', ''); full_time_str = f"{main_part} {offset_part_clean}"
-    # logging.debug(f"Formatted time: {full_time_str}"); # Keep commented unless debugging format
     return full_time_str
 
 def ensure_output_dir():
@@ -134,7 +128,7 @@ def ensure_output_dir():
         try: os.makedirs(OUTPUT_DIR)
         except OSError as e: logging.error(f"Failed to create directory {OUTPUT_DIR}: {e}"); raise
 
-ADD_XMLTV_DOCTYPE = True # Keep DOCTYPE addition
+ADD_XMLTV_DOCTYPE = True
 
 def save_gzipped_xml(tree, filepath):
     """Saves the ElementTree XML to a gzipped file, optionally adding DOCTYPE."""
@@ -172,9 +166,8 @@ def process_stream_uri(uri):
 # --- Core Logic Functions ---
 
 def get_channels_via_primary_list():
-    """Gets channel list from the primary Valencia endpoint."""
+    """Gets channel list from the primary Valencia endpoint and assigns 'Fast Xumo' as the category."""
     logging.info(f"Attempting Primary Channel List: {PRIMARY_CHANNEL_LIST_URL}")
-    # Use WEB_HEADERS for Valencia endpoint
     data = fetch_data(PRIMARY_CHANNEL_LIST_URL, is_json=True, retries=1, headers=WEB_HEADERS)
     if not data or not isinstance(data, dict): logging.warning(f"Failed to fetch valid dictionary data from primary list endpoint."); return None
     processed_channels = []; channel_items = []
@@ -192,9 +185,11 @@ def get_channels_via_primary_list():
         if not is_live: logging.debug(f"Skipping non-live channel: {item.get('guid', {}).get('value')} ({item.get('title')})"); continue
         try:
             channel_id = item.get('guid', {}).get('value'); title = item.get('title'); number_str = item.get('number')
-            logo_url = item.get('images', {}).get('logo') or item.get('logo'); genre_list = item.get('genre'); genre = 'General'
-            if isinstance(genre_list, list) and len(genre_list) > 0 and isinstance(genre_list[0], dict): genre = genre_list[0].get('value', 'General')
-            elif isinstance(genre_list, str): genre = genre_list
+            logo_url = item.get('images', {}).get('logo') or item.get('logo')
+            
+            # Category forced to Fast Xumo as requested
+            genre = "Fast Xumo"
+
             if not channel_id or not title: logging.warning(f"Skipping item due to missing ID or title: {item}"); continue
             channel_id_str = str(channel_id); final_logo_url = None
             if logo_url:
@@ -208,24 +203,18 @@ def get_channels_via_primary_list():
     logging.info(f"Successfully processed {len(processed_channels)} live, non-DRM channels from primary list endpoint.")
     return processed_channels
 
-# <<< FUNCTION ADDED BACK >>>
 def fetch_stream_urls_via_asset_lookup(channels_list):
     """Fetches stream URLs via Android TV asset lookup method for ALL provided channels."""
-    # This function now assumes it needs to get streams for the entire list passed to it.
     logging.info(f"Attempting Android TV asset lookup for {len(channels_list)} channels...")
     processed_count = 0; channels_with_streams = []
 
     for i, channel_info in enumerate(channels_list):
         channel_id = channel_info['id']
-        # We no longer skip based on existing stream_url, assuming this function is called
-        # when we *know* we need to fetch streams via this method.
         logging.debug(f"Asset Lookup: Processing {channel_id} ({channel_info['name']}) ({i+1}/{len(channels_list)})")
 
-        # 1. Get current asset ID (using Android TV endpoint for broadcast)
         current_hour = datetime.now(timezone.utc).hour
         broadcast_url = BROADCAST_NOW_URL_TEMPLATE.format(channel_id=channel_id, hour_num=current_hour)
         logging.debug(f"Fetching broadcast info: {broadcast_url}")
-        # Use ANDROID_TV_HEADERS for these specific calls
         broadcast_data = fetch_data(broadcast_url, is_json=True, retries=1, headers=ANDROID_TV_HEADERS)
 
         asset_id = None
@@ -238,14 +227,12 @@ def fetch_stream_urls_via_asset_lookup(channels_list):
             if current_asset: asset_id = current_asset.get('id')
             if asset_id: logging.debug(f"Found current asset ID {asset_id} for channel {channel_id}")
             else: logging.warning(f"Relevant asset in broadcast data for channel {channel_id} has no ID.")
-        else: logging.warning(f"Could not get valid broadcast data or assets for channel {channel_id} (Hour: {current_hour})"); time.sleep(API_DELAY_SECONDS); continue # Skip channel if broadcast fails
+        else: logging.warning(f"Could not get valid broadcast data or assets for channel {channel_id} (Hour: {current_hour})"); time.sleep(API_DELAY_SECONDS); continue
 
-        if not asset_id: logging.warning(f"No asset ID found for channel {channel_id}, cannot get stream URL."); time.sleep(API_DELAY_SECONDS); continue # Skip channel
+        if not asset_id: logging.warning(f"No asset ID found for channel {channel_id}, cannot get stream URL."); time.sleep(API_DELAY_SECONDS); continue
 
-        # 2. Get asset details (using Android TV endpoint for assets)
         asset_details_url = ASSET_DETAILS_URL_TEMPLATE.format(asset_id=asset_id)
         logging.debug(f"Fetching asset details: {asset_details_url}")
-        # Use ANDROID_TV_HEADERS for these specific calls
         asset_data = fetch_data(asset_details_url, is_json=True, headers=ANDROID_TV_HEADERS)
 
         raw_stream_uri = None
@@ -258,24 +245,21 @@ def fetch_stream_urls_via_asset_lookup(channels_list):
                      if raw_stream_uri: break
         else: logging.warning(f"Could not find providers/sources for asset {asset_id} (Channel {channel_id})")
 
-        if not raw_stream_uri: logging.warning(f"No stream URI found in sources for asset {asset_id} (Channel {channel_id})"); time.sleep(API_DELAY_SECONDS); continue # Skip channel
+        if not raw_stream_uri: logging.warning(f"No stream URI found in sources for asset {asset_id} (Channel {channel_id})"); time.sleep(API_DELAY_SECONDS); continue
 
-        # 3. Process URI
         processed_stream_url = process_stream_uri(raw_stream_uri)
         if processed_stream_url:
-            # Create a new dict or update existing one with stream_url
-            updated_channel_info = channel_info.copy() # Avoid modifying original list directly if passed by reference elsewhere
+            updated_channel_info = channel_info.copy()
             updated_channel_info['stream_url'] = processed_stream_url
             logging.debug(f"Successfully processed stream URL for channel {channel_id} via asset lookup")
-            channels_with_streams.append(updated_channel_info) # Add the updated dict
+            channels_with_streams.append(updated_channel_info)
             processed_count += 1
-        else: logging.warning(f"Failed to process stream URI for asset {asset_id} (Channel {channel_id})") # Don't add if processing fails
+        else: logging.warning(f"Failed to process stream URI for asset {asset_id} (Channel {channel_id})")
 
         time.sleep(API_DELAY_SECONDS)
 
     logging.info(f"Asset lookup method obtained stream URLs for {processed_count} channels.")
-    return channels_with_streams # Return the new list containing only channels where stream URL was found
-# <<< END OF FUNCTION ADDED BACK >>>
+    return channels_with_streams
 
 
 def fetch_epg_data(channel_list):
@@ -344,7 +328,7 @@ def generate_epg_xml(channel_list_with_streams, consolidated_epg_data):
     logging.debug("Adding channel elements to EPG XML...")
     for channel in channel_list_with_streams:
         chan_el = ET.SubElement(tv_element, 'channel', attrib={'id': channel['id']})
-        ET.SubElement(chan_el, 'display-name').text = channel['name'] # Only one display-name
+        ET.SubElement(chan_el, 'display-name').text = channel['name']
         if channel['logo']: ET.SubElement(chan_el, 'icon', attrib={'src': channel['logo']})
     logging.debug("Adding programme elements to EPG XML...")
     total_programs_in_data = sum(len(progs) for progs in consolidated_epg_data.values())
@@ -361,7 +345,7 @@ def generate_epg_xml(channel_list_with_streams, consolidated_epg_data):
                 title = program.get('title', 'Unknown Program'); desc_obj = program.get('descriptions', {})
                 desc = desc_obj.get('large') or desc_obj.get('medium') or desc_obj.get('small') or desc_obj.get('tiny')
                 episode_title = program.get('episodeTitle'); asset_id = program.get('assetId')
-                start_formatted = format_xmltv_time(start_time); stop_formatted = format_xmltv_time(end_time) # Use final updated formatter
+                start_formatted = format_xmltv_time(start_time); stop_formatted = format_xmltv_time(end_time)
                 if start_formatted and stop_formatted:
                     prog_el = ET.SubElement(tv_element, 'programme', attrib={'start': start_formatted,'stop': stop_formatted,'channel': channel_id})
                     ET.SubElement(prog_el, 'title', attrib={'lang': 'en'}).text = title
@@ -374,7 +358,7 @@ def generate_epg_xml(channel_list_with_streams, consolidated_epg_data):
                 else: logging.warning(f"    Skipping program due to invalid formatted time: AssetID={program_asset_id}, Title='{title}' (Channel: {channel_id})")
             except Exception as e: logging.exception(f"Error processing EPG program item {program_asset_id} for channel {channel_id}: {e}")
     logging.info(f"Generated XML with {len(channel_list_with_streams)} channels and {programme_count} programmes.")
-    if programme_count == 0 and total_programs_in_data > 0: logging.warning("EPG data was fetched, but no valid program entries could be added to the XML. Check time parsing/formatting issues in DEBUG logs.")
+    if programme_count == 0 and total_programs_in_data > 0: logging.warning("EPG data was fetched, but no valid program entries could be added to the XML.")
     return ET.ElementTree(tv_element)
 
 def generate_m3u_playlist(channel_list_with_streams):
@@ -387,7 +371,7 @@ def generate_m3u_playlist(channel_list_with_streams):
     sorted_channels = sorted(channel_list_with_streams, key=sort_key)
     for channel in sorted_channels:
         stream_url = channel.get('stream_url'); channel_id = channel['id']; display_name = channel['name'].replace(',', ';')
-        group_title = channel.get('group', 'General').replace(',', ';'); tvg_name = channel['name'].replace('"', "'"); logo = channel.get("logo", "")
+        group_title = channel.get('group', 'Fast Xumo').replace(',', ';'); tvg_name = channel['name'].replace('"', "'"); logo = channel.get("logo", "")
         if stream_url:
             extinf_line = f'#EXTINF:-1 tvg-id="{channel_id}" tvg-name="{tvg_name}" tvg-logo="{logo}" group-title="{group_title}",{display_name}\n'
             playlist_parts.append(extinf_line); playlist_parts.append(f'{stream_url}\n'); added_count += 1
@@ -410,7 +394,7 @@ if __name__ == "__main__":
 
     # Step 2: Fetch Stream URLs using Asset Lookup method
     logging.info(f"Step 2: Fetching stream URLs via asset lookup for {len(primary_channel_list)} channels...")
-    final_channel_list_with_streams = fetch_stream_urls_via_asset_lookup(primary_channel_list) # Pass the list obtained from Step 1
+    final_channel_list_with_streams = fetch_stream_urls_via_asset_lookup(primary_channel_list)
 
     if not final_channel_list_with_streams:
          logging.warning("No channels with stream URLs found after processing. Generating empty files.")
@@ -421,7 +405,7 @@ if __name__ == "__main__":
 
     logging.info(f"Proceeding with {len(final_channel_list_with_streams)} channels confirmed to have stream URLs.")
 
-    # Step 3: Fetch EPG Data (Using new hourly method)
+    # Step 3: Fetch EPG Data
     epg_data = fetch_epg_data(final_channel_list_with_streams)
 
     # Step 4: Generate EPG XML
