@@ -5,9 +5,9 @@ name: Generate Xumo Playlist and EPG
 on:
   workflow_dispatch: # Allows manual triggering from the Actions tab in GitHub
   schedule:
-    # Runs around 4 AM UTC daily (adjust cron schedule as needed)
+    # Runs around 2 AM UTC daily (adjust cron schedule as needed)
     # See: https://crontab.guru/
-    - cron: '0 4 * * *'
+    - cron: '0 2 * * *'
 
 jobs:
   generate: # Name of the job
@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Or your desired Python version
+          python-version: '3.15' # Newest stable release
 
       # Step 3: Install required Python dependencies
       - name: Install dependencies
@@ -41,9 +41,8 @@ jobs:
           echo "--- 'playlists' dir contents BEFORE script ---"
           ls -la playlists/ || echo "INFO: 'playlists' directory does not exist yet."
 
-          # --- IMPORTANT: REPLACE 'your_script_name.py' with the actual filename ---
-          echo "--- Running Python Script: generate_xumo.py ---" # Assuming this is your filename now
-          python generate_xumo.py # <<< CHANGE THIS FILENAME if it's different
+          echo "--- Running Python Script: generate_xumo.py ---"
+          python generate_xumo.py
 
           echo "--- Python Script Finished ---"
 
